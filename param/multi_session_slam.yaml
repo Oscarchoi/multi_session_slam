@@ -19,3 +19,9 @@ scan_matcher:
     num_targeted_cloud: 20
     debug: true
     debug_cloud_topic: "/target_cloud"
+
+multi_session_slam:
+  ros__parameters:
+    input_cloud_topic: "/modified_cloud"
+    session_start_service: "/session_start"
+    session_end_service: "/session_end"

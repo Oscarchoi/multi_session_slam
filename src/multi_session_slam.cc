@@ -1,67 +1,153 @@
 #include "multi_session_slam/multi_session_slam.h"
 
-#include <iostream>
-
+#include <pcl/filters/filter.h>
+#include <pcl/filters/passthrough.h>
 #include <pcl_conversions/pcl_conversions.h>
-#include <tf2_sensor_msgs/tf2_sensor_msgs.h>
+#include <pclomp/voxel_grid_covariance_omp.h>
 
-#include <pcl/io/pcd_io.h>
-#include <pcl/point_types.h>
-#include <pcl/registration/gicp.h>
-#include <pcl/registration/ndt.h>
+namespace multi_session_slam {
 
-namespace ms_slam {
+namespace {
 
-MultiSessionSlamNode::MultiSessionSlamNode(
-    const std::string& node_name,
-    const rclcpp::NodeOptions& node_options)
-    : Node(node_name, node_options),
-      tf_buffer_(get_clock()),
-      tf_listener_(tf_buffer_) {
-  declare_parameter("global_frame_id", "map");
-  get_parameter("global_frame_id", global_frame_id_);
-  declare_parameter("robot_frame_id", "base_link");
-  get_parameter("robot_frame_id", robot_frame_id_);
-  declare_parameter("input_cloud_topic", "input_cloud");
-  get_parameter("input_cloud_topic", input_cloud_topic_);
-
-  declare_parameter("vg_size_for_input", 0.2);
-  get_parameter("vg_size_for_input", vg_size_for_input_);
-  declare_parameter("vg_size_for_map", 0.1);
-  get_parameter("vg_size_for_map", vg_size_for_map_);
-
-  std::cout << "global_frame_id: " << global_frame_id_ << std::endl;
-  std::cout << "robot_frame_id: " << robot_frame_id_ << std::endl;
-  std::cout << "input_cloud_topic: " << input_cloud_topic_ << std::endl;
-  std::cout << "-----------------" << std::endl;
-
-  input_cloud_subscription_ =
-      create_subscription<sensor_msgs::msg::PointCloud2>(
-          input_cloud_topic_, rclcpp::SensorDataQoS(),
-          std::bind(&MultiSessionSlamNode::OnInputCloudReceived, this,
-                    std::placeholders::_1));
+template <typename T>
+T get_or_default_parameter(rclcpp::Node* node,
+                           const std::string& param_name,
+                           const T& default_value) {
+  if (!node->has_parameter(param_name)) {
+    node->declare_parameter<T>(param_name, default_value);
+  }
+  return node->get_parameter(param_name).get_value<T>();
 }
 
-void MultiSessionSlamNode::OnInputCloudReceived(
-    const typename sensor_msgs::msg::PointCloud2::SharedPtr msg) {
-  sensor_msgs::msg::PointCloud2 transformed_msg;
-  try {
-    auto transform = tf_buffer_.lookupTransform(
-        global_frame_id_, msg->header.frame_id, msg->header.stamp);
-    tf2::doTransform(*msg, transformed_msg, transform);
-  } catch (tf2::TransformException& e) {
-    RCLCPP_ERROR(this->get_logger(), "%s", e.what());
+Eigen::Matrix4f convert(const geometry_msgs::msg::Pose& pose) {
+  Eigen::Matrix4f transform = Eigen::Matrix4f::Identity();
+  transform(0, 3) = pose.position.x;
+  transform(1, 3) = pose.position.y;
+  transform(2, 3) = pose.position.z;
+
+  Eigen::Quaternionf quaternion(pose.orientation.w, pose.orientation.x,
+                                pose.orientation.y, pose.orientation.z);
+  transform.block<3, 3>(0, 0) = quaternion.toRotationMatrix();
+  return transform;
+}
+
+}  // namespace
+
+MultiSessionSlam::MultiSessionSlam(const rclcpp::NodeOptions& options)
+    : rclcpp::Node("multi_session_slam", options) {
+  input_cloud_topic_ = get_or_default_parameter(this, "input_cloud_topic",
+                                                std::string("/input_cloud"));
+  session_start_service_ = get_or_default_parameter(
+      this, "session_start_service", std::string("/session_start"));
+  session_end_service_ = get_or_default_parameter(this, "session_end_service",
+                                                  std::string("/session_end"));
+
+  global_frame_id_ =
+      get_or_default_parameter(this, "global_frame_id", std::string("map"));
+  vg_size_for_input_ = get_or_default_parameter(this, "vg_size_for_input", 0.2);
+
+  input_cloud_subscription_ =
+      create_subscription<multi_session_slam_msgs::msg::PointCloudWithPose>(
+          input_cloud_topic_, rclcpp::SensorDataQoS(),
+          std::bind(&MultiSessionSlam::OnPointCloudReceived, this,
+                    std::placeholders::_1));
+  slam_session_start_service_ = create_service<test_msgs::srv::BasicTypes>(
+      session_start_service_,
+      std::bind(&MultiSessionSlam::OnSessionStartRequested, this,
+                std::placeholders::_1, std::placeholders::_2));
+  slam_session_end_service_ = create_service<test_msgs::srv::BasicTypes>(
+      session_end_service_,
+      std::bind(&MultiSessionSlam::OnSessionEndRequested, this,
+                std::placeholders::_1, std::placeholders::_2));
+}
+
+MultiSessionSlam::~MultiSessionSlam() {}
+
+void MultiSessionSlam::OnPointCloudReceived(
+    const typename multi_session_slam_msgs::msg::PointCloudWithPose::SharedPtr
+        msg) {
+  RCLCPP_INFO(this->get_logger(), "Received pointcloud.");
+  if (msg->cloud.header.frame_id != global_frame_id_) {
+    RCLCPP_ERROR(this->get_logger(),
+                 "Received pointcloud with invalid frame: %s",
+                 msg->cloud.header.frame_id);
     return;
   }
 
-  pcl::PointCloud<pcl::PointXYZI>::Ptr pointcloud(
-      new pcl::PointCloud<pcl::PointXYZI>());
-  pcl::fromROSMsg(transformed_msg, *pointcloud);
+  PointCloudType::Ptr input_cloud(new PointCloudType);
+  pcl::fromROSMsg(msg->cloud, *input_cloud);
+  std::vector<int> indices;
+  pcl::removeNaNFromPointCloud(*input_cloud, *input_cloud, indices);
 
-  // pcl::VoxelGrid<pcl::PointXYZI> voxel_grid;
-  // voxel_grid.setLeafSize(vg_size_for_map_, vg_size_for_map_, vg_size_for_map_);
-  // voxel_grid.setInputCloud(pointcloud);
-  // voxel_grid.filter(*pointcloud);
+  PointCloudType::Ptr filtered_cloud(new PointCloudType);
+  pcl::VoxelGrid<PointType> grid_filter;
+  grid_filter.setLeafSize(vg_size_for_input_, vg_size_for_input_,
+                          vg_size_for_input_);
+  grid_filter.setInputCloud(input_cloud);
+  grid_filter.filter(*filtered_cloud);
+  filtered_cloud->is_dense = true;
+
+  Eigen::Matrix4f pose = convert(msg->pose);
+
+  {
+    std::lock_guard<std::mutex> lock(session_mutex_);
+    for (auto& session : slam_sessions_) {
+      session.second->RegisterPointCloud(filtered_cloud, pose);
+    }
+  }
 }
 
-}  // namespace ms_slam
+void MultiSessionSlam::OnSessionStartRequested(
+    const std::shared_ptr<test_msgs::srv::BasicTypes::Request> request,
+    std::shared_ptr<test_msgs::srv::BasicTypes::Response> response) {
+  RCLCPP_INFO(this->get_logger(), "Received SLAM session start requested: %s",
+              request->string_value);
+
+  const std::string session_key = request->string_value;
+  {
+    std::lock_guard<std::mutex> lock(session_mutex_);
+    if (slam_sessions_.find(session_key) != slam_sessions_.end()) {
+      RCLCPP_WARN(this->get_logger(), "Session with key '%s' already exists.",
+                  session_key.c_str());
+      response->bool_value = false;
+      return;
+    }
+    slam_sessions_[session_key] = std::make_shared<GraphSlam>(this);
+  }
+
+  RCLCPP_INFO(this->get_logger(), "SLAM session '%s' started successfully.",
+              session_key.c_str());
+  response->bool_value = true;
+}
+
+void MultiSessionSlam::OnSessionEndRequested(
+    const std::shared_ptr<test_msgs::srv::BasicTypes::Request> request,
+    std::shared_ptr<test_msgs::srv::BasicTypes::Response> response) {
+  RCLCPP_INFO(this->get_logger(), "Received SLAM session end requested: %s",
+              request->string_value);
+
+  const std::string session_key = request->string_value;
+  std::shared_ptr<GraphSlam> target_session;
+
+  {
+    std::lock_guard<std::mutex> lock(session_mutex_);
+    auto it = slam_sessions_.find(session_key);
+    if (it == slam_sessions_.end()) {
+      RCLCPP_WARN(this->get_logger(), "Session with key '%s' does not exist.",
+                  session_key.c_str());
+      response->bool_value = false;
+      return;
+    }
+    target_session = it->second;  // copy from the map
+    slam_sessions_.erase(it);
+  }
+
+  // Wait for the session to be fully destroyed
+  target_session.reset();
+
+  RCLCPP_INFO(this->get_logger(), "SLAM session '%s' ended successfully.",
+              session_key.c_str());
+  response->bool_value = true;
+}
+
+}  // namespace multi_session_slam

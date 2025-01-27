@@ -21,6 +21,8 @@ find_package(rclcpp_components REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
+find_package(test_msgs REQUIRED)
+find_package(multi_session_slam_msgs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(tf2_sensor_msgs REQUIRED)
@@ -30,6 +32,7 @@ find_package(pcl_conversions REQUIRED)
 find_package(ndt_omp_ros2 REQUIRED)
 find_package(PCL REQUIRED)
 find_package(OpenMP)
+find_package(g2o REQUIRED COMPONENTS g2o::core g2o::types_slam3d g2o::solver_eigen)
 
 if (OPENMP_FOUND)
     set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OpenMP_C_FLAGS}")
@@ -82,7 +85,51 @@ ament_target_dependencies(scan_matcher_node
   rclcpp
 )
 
-ament_export_libraries(scan_matcher)
+add_library(multi_session_slam
+  SHARED
+  src/multi_session_slam.cc
+  src/graph_slam/graph_slam.cc
+)
+
+target_link_libraries(multi_session_slam
+  g2o::core
+  g2o::types_slam3d
+  g2o::solver_eigen
+  ${PCL_LIBRARIES}
+)
+
+ament_target_dependencies(multi_session_slam
+  rclcpp
+  rclcpp_components
+  tf2_ros
+  tf2_geometry_msgs
+  tf2_sensor_msgs
+  tf2_eigen
+  geometry_msgs
+  sensor_msgs
+  test_msgs
+  nav_msgs
+  multi_session_slam_msgs
+  ndt_omp_ros2
+)
+
+add_executable(multi_session_slam_node
+  src/multi_session_slam_node.cc
+)
+
+target_link_libraries(multi_session_slam_node
+  multi_session_slam
+  ${PCL_LIBRARIES}
+)
+
+ament_target_dependencies(multi_session_slam_node
+  rclcpp
+)
+
+ament_export_libraries(
+  scan_matcher
+  multi_session_slam
+)
 
 install(
   DIRECTORY "include/"
@@ -103,6 +150,18 @@ install(TARGETS
 
 install(TARGETS
   scan_matcher_node
+  DESTINATION lib/${PROJECT_NAME}
+)
+
+install(TARGETS
+  multi_session_slam
+  ARCHIVE DESTINATION lib
+  LIBRARY DESTINATION lib
+  RUNTIME DESTINATION bin
+)
+
+install(TARGETS
+  multi_session_slam_node
   DESTINATION lib/${PROJECT_NAME}
 )
 

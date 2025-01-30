@@ -46,14 +46,35 @@ MultiSessionSlam::MultiSessionSlam(const rclcpp::NodeOptions& options)
   global_frame_id_ =
       get_or_default_parameter(this, "global_frame_id", std::string("map"));
   vg_size_for_input_ = get_or_default_parameter(this, "vg_size_for_input", 0.2);
+  debug_ = get_or_default_parameter(this, "debug", false);
 
-  get_or_default_parameter(this, "registration_method", std::string("NDT"));
-  get_or_default_parameter(this, "voxel_leaf_size", 0.2);
-  get_or_default_parameter(this, "threshold_loop_closure_score", 1.0);
-  get_or_default_parameter(this, "range_of_searching_loop_closure", 20.0);
-  get_or_default_parameter(this, "loop_closure_search_num", 10.0);
-  get_or_default_parameter(this, "num_adjacent_pose_constraints", 5);
-  get_or_default_parameter(this, "is_debug", false);
+  auto registration_method =
+      get_or_default_parameter(this, "registration_method", std::string("NDT"));
+  auto voxel_leaf_size = get_or_default_parameter(this, "voxel_leaf_size", 0.2);
+  auto threshold_loop_closure_score =
+      get_or_default_parameter(this, "threshold_loop_closure_score", 1.0);
+  auto range_of_searching_loop_closure =
+      get_or_default_parameter(this, "range_of_searching_loop_closure", 20.0);
+  auto loop_closure_search_num =
+      get_or_default_parameter(this, "loop_closure_search_num", 10.0);
+  auto num_adjacent_pose_constraints =
+      get_or_default_parameter(this, "num_adjacent_pose_constraints", 5);
+
+  if (debug_) {
+    std::cout << "------------------" << std::endl;
+    std::cout << "registration_method: " << registration_method << "\n"
+              << "vg_size_for_input: " << vg_size_for_input_ << "\n"
+              << "voxel_leaf_size: " << voxel_leaf_size << "\n"
+              << "threshold_loop_closure_score: "
+              << threshold_loop_closure_score << "\n"
+              << "range_of_searching_loop_closure: "
+              << range_of_searching_loop_closure << "\n"
+              << "loop_closure_search_num: " << loop_closure_search_num << "\n"
+              << "num_adjacent_pose_constraints: "
+              << num_adjacent_pose_constraints << "\n"
+              << "is_debug: " << debug_ << "\n";
+    std::cout << "------------------" << std::endl;
+  }
 
   input_cloud_subscription_ =
       create_subscription<multi_session_slam_msgs::msg::PointCloudWithPose>(

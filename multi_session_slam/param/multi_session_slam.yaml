@@ -35,3 +35,4 @@ multi_session_slam:
     range_of_searching_loop_closure: 20.0
     loop_closure_search_num: 10.0
     num_adjacent_pose_constraints: 5
+    debug: true

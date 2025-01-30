@@ -56,9 +56,9 @@ class MultiSessionSlam : public rclcpp::Node {
   std::string output_cloud_topic_;
   std::string session_start_service_;
   std::string session_end_service_;
-
   std::string global_frame_id_;
 
+  bool debug_ = false;
   double vg_size_for_input_;
 };
 

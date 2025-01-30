@@ -74,8 +74,12 @@ void GraphSlam::RegisterPointCloud(const PointCloudType::Ptr& input_cloud,
   pose_array_.push_back(pose);
 }
 
-void GraphSlam::Finish() {
+GraphSlam::PointCloudType::Ptr GraphSlam::GenerateMapFromClouds() {
   bool found = SearchLoopClosure();
+  if (!found) {
+    return nullptr;
+  }
+  return DoPoseAdjustment();
 }
 
 bool GraphSlam::SearchLoopClosure() {

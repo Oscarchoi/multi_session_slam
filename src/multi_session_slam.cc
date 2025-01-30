@@ -142,11 +142,19 @@ void MultiSessionSlam::OnSessionEndRequested(
     slam_sessions_.erase(it);
   }
 
-  // Wait for the session to be fully destroyed
-  target_session.reset();
-
-  RCLCPP_INFO(this->get_logger(), "SLAM session '%s' ended successfully.",
+  RCLCPP_INFO(this->get_logger(), "Start map generation for session '%s'...",
               session_key.c_str());
+  // Wait for the session to be fully destroyed
+  auto map = target_session->GenerateMapFromClouds();
+  RCLCPP_INFO(this->get_logger(), "Session '%s' ended successfully.",
+              session_key.c_str());
+
+  sensor_msgs::msg::PointCloud2 msg;
+  pcl::toROSMsg(*map, msg);
+  msg.header.frame_id = global_frame_id_;
+  msg.header.stamp = this->now();
+  output_cloud_publisher_->publish(msg);
+
   response->bool_value = true;
 }
 

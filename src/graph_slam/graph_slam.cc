@@ -1,3 +1,17 @@
+// This software is licensed under the BSD 2-Clause License.
+// Copyright (c) 2020, Ryohei Sasaki. All rights reserved.
+//
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted under the following conditions:
+//
+// 1. Redistributions of source code must retain the copyright notice,
+//    license conditions, and disclaimer.
+// 2. Redistributions in binary form must reproduce the above information in
+//    the documentation and/or other materials provided with the distribution.
+//
+// THIS SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.
+// For full license details, see the LICENSE file in the project root.
+
 #include "multi_session_slam/graph_slam/graph_slam.h"
 
 #include <pcl/filters/filter.h>

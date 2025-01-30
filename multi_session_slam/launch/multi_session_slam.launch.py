@@ -3,16 +3,16 @@ import os
 import launch
 import launch_ros.actions
 
-from ament_index_python.packages import get_package_share_directory
+from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
-    parameters_file = default = (
-        os.path.join(
-            get_package_share_directory("multi_session_slam"),
+    parameters_file = PathJoinSubstitution(
+        [
+            FindPackageShare("multi_session_slam"),
             "param",
             "multi_session_slam.yaml",
-        ),
+        ]
     )
 
     scan_matcher_node = launch_ros.actions.Node(

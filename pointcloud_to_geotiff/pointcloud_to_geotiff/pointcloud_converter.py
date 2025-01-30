@@ -32,8 +32,12 @@ class PointCloudConverter(Node):
         self.robot_frame_id = self.get_parameter("robot_frame_id").value
 
         # other parameters
-        self.declare_parameter("resolution", 0.05)
-        self.resolution = self.get_parameter("resolution").value
+        self.declare_parameter("dense_resolution", 0.05)
+        self.dense_resolution = self.get_parameter("dense_resolution").value
+        self.declare_parameter("sparse_resolution", 0.05)
+        self.sparse_resolution = self.get_parameter("sparse_resolution").value
+        self.resolution = self.sparse_resolution
+
         self.declare_parameter("sonar_distance", 80.0)
         self.sonar_distance = self.get_parameter("sonar_distance").value
         self.declare_parameter("initial_x", 0.0)
@@ -45,11 +49,10 @@ class PointCloudConverter(Node):
         self.declare_parameter("enable_metadata", False)
         self.enable_metadata = self.get_parameter("enable_metadata").value
 
-        self.global_frame_id, self.robot_frame_id
-
         self.subscription = self.create_subscription(
             PointCloud2, self.input_cloud_topic, self.listener_callback, 1
         )
+        self.latest_subscription = rclpy.time.Time()
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
 
@@ -57,8 +60,20 @@ class PointCloudConverter(Node):
         self.x = self.initial_x
         self.y = self.initial_y
 
-        self.get_logger().info(f"Resolution: {self.resolution}.")
-        self.get_logger().info(f"Shape: {self.grid_size}x{self.grid_size} (WxH).")
+        self.get_logger().info(f"----------------------")
+        self.get_logger().info(f"input_cloud_topic: {self.input_cloud_topic}")
+        self.get_logger().info(f"output_directory: {self.output_directory}")
+        self.get_logger().info(f"enable_tf_update: {self.enable_tf_update}")
+        self.get_logger().info(f"global_frame_id: {self.global_frame_id}")
+        self.get_logger().info(f"robot_frame_id: {self.robot_frame_id}")
+        self.get_logger().info(f"resolution: {self.resolution}")
+        self.get_logger().info(f"sonar_distance: {self.sonar_distance}")
+        self.get_logger().info(f"initial_x: {self.initial_x}")
+        self.get_logger().info(f"initial_y: {self.initial_y}")
+        self.get_logger().info(f"enable_png: {self.enable_png}")
+        self.get_logger().info(f"enable_metadata: {self.enable_metadata}")
+        self.get_logger().info(f"grid_size: {self.grid_size}x{self.grid_size} (WxH).")
+        self.get_logger().info(f"----------------------")
 
     def listener_callback(self, msg):
         self.get_logger().info(
@@ -66,10 +81,15 @@ class PointCloudConverter(Node):
         )
 
         if self.enable_tf_update:
-            self.get_base_link_pose(msg.header.timestamp)
+            self.get_base_link_pose(msg.header.stamp)
 
         points = self.pointcloud2_to_array(msg)
-        mean_x, mean_y, mean_z = np.mean(points, axis=0)
+        x = points[:, 0]
+        y = points[:, 1]
+        z = points[:, 2]
+        mean_x = np.mean(x)
+        mean_y = np.mean(y)
+        mean_z = np.mean(z)
         self.get_logger().info(
             f"Mean Point: x={mean_x:.3f}, y={mean_y:.3f}, z={mean_z:.3f}"
         )
@@ -90,14 +110,11 @@ class PointCloudConverter(Node):
             )
             return
         else:
-            self.get_logger().info(
-                f"{num_true_points} points in the point cloud were filtered as true within the grid area."
-            )
+            self.get_logger().info(f"Filtered pointcloud: {num_true_points}.")
 
-        filtered_x = points[:, 0][mask]
-        filtered_y = points[:, 1][mask]
-        filtered_z = points[:, 2][mask]
-
+        filtered_x = x[mask]
+        filtered_y = y[mask]
+        filtered_z = z[mask]
         x_indices = np.floor((filtered_x - x_min) / self.resolution).astype(int)
         y_indices = np.floor((filtered_y - y_min) / self.resolution).astype(int)
         z_values = np.floor((filtered_z) / self.resolution).astype(int)
@@ -143,7 +160,7 @@ class PointCloudConverter(Node):
         if z_max - z_min == 0:
             return
 
-        z_scale = 1.0 / (z_max - z_min) * 255
+        z_scale = 1.0 / (z_max - z_min) * 255.0
         z_offset = z_min
 
         norm_grid = (grid - z_offset) * z_scale
@@ -154,7 +171,7 @@ class PointCloudConverter(Node):
         output_file = f"{self.output_directory}/pointcloud_{timestamp}.png"
         cv2.imwrite(output_file, norm_grid)
 
-        print(f"INFO: Saved pointcloud to '{output_file}'")
+        self.get_logger().info(f"INFO: Saved pointcloud to '{output_file}'")
 
     def convert_to_geotiff(self, grid, timestamp):
         output_file = f"{self.output_directory}/output_{timestamp}.tiff"
@@ -188,17 +205,27 @@ class PointCloudConverter(Node):
         # close file
         dataset = None
 
-        print(f"INFO: Saved pointcloud to '{output_file}'")
+        self.get_logger().info(f"INFO: Saved pointcloud to '{output_file}'")
 
     def get_base_link_pose(self, timestamp):
         try:
             transform = self.tf_buffer.lookup_transform(
-                self.global_frame_id, self.robot_frame_id, timestamp
+                self.global_frame_id,
+                self.robot_frame_id,
+                timestamp,
+                timeout=rclpy.duration.Duration(seconds=3),
             )
             self.x = transform.transform.translation.x
             self.y = transform.transform.translation.y
         except tf2_ros.LookupException as e:
-            self.get_logger().warn("TF Lookup failed: Could not get base_link pose.")
+            self.get_logger().warn(
+                "TF Lookup failed: Could not get %s pose: %s", self.robot_frame_id, e
+            )
+        except tf2_ros.ExtrapolationException as e:
+            self.get_logger().warn(
+                "TF Lookup failed: Could not get %s pose: %s", self.robot_frame_id, e
+            )
+
 
 def main(args=None):
     rclpy.init(args=args)
@@ -207,7 +234,9 @@ def main(args=None):
     try:
         rclpy.spin(pointcloud_converter)
     except KeyboardInterrupt:
-        pointcloud_converter.get_logger().info("KeyboardInterrupt detected. Shutting down cleanly...")
+        pointcloud_converter.get_logger().info(
+            "KeyboardInterrupt detected. Shutting down cleanly..."
+        )
     finally:
         pointcloud_converter.destroy_node()
         rclpy.shutdown()

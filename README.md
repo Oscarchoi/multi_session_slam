@@ -8,7 +8,22 @@ This repository provides a ROS 2 package that supports multi-session SLAM, allow
 - Supports starting and stopping mapping sessions dynamically
 - Built on ROS 2 for seamless integration with modern robotic applications
 
+## Installation
+
+```bash
+mkdir -p ~/ros2_ws/src
+cd ~/ros2_ws/src
+git clone https://github.com/Oscarchoi/multi_session_slam.git
+colcon build
+```
+
 ## Usage
+
+### Start multi_session_slam & pointcloud_converter
+
+```bash
+ros2 launch pointcloud_to_geotiff pointcloud_converter.launch.py
+```
 
 ### Start a Session
 

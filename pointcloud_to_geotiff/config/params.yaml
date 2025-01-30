@@ -2,12 +2,13 @@ pointcloud_converter:
   ros__parameters:
     input_cloud_topic: /output_cloud
     output_directory: "/tmp/geotiff_maps"
-    enable_png: false
+    enable_png: true
     enable_metadata: false
-    enable_tf_update: true
+    enable_tf_update: False
     global_frame_id: "map"
-    robot_frame_id: "base_link"
-    resolution: 0.05
+    robot_frame_id: "sensors"
+    dense_resolution: 0.1
+    sparse_resolution: 0.05
     sonar_distance: 80.0
     initial_x: 0.0
     initial_y: 0.0

@@ -1,6 +1,6 @@
 scan_matcher:
   ros__parameters:
-    input_cloud_topic: "/multiBeam"
+    input_cloud_topic: "/input_cloud"
     output_cloud_topic: "/modified_cloud"
     global_frame_id: "map"
     registration_method: "NDT"

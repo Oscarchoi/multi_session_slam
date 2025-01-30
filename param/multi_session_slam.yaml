@@ -23,7 +23,15 @@ scan_matcher:
 multi_session_slam:
   ros__parameters:
     input_cloud_topic: "/modified_cloud"
+    output_cloud_topic: "/output_cloud"
     session_start_service: "/session_start"
     session_end_service: "/session_end"
     global_frame_id: "map"
     vg_size_for_input: 0.1
+
+    registration_method: "NDT"
+    voxel_leaf_size: 0.2
+    threshold_loop_closure_score: 1.0
+    range_of_searching_loop_closure: 20.0
+    loop_closure_search_num: 10.0
+    num_adjacent_pose_constraints: 5

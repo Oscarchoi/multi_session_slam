@@ -32,6 +32,8 @@
 #include <tf2_ros/transform_broadcaster.h>
 #include <tf2_ros/transform_listener.h>
 
+#include "multi_session_slam_msgs/msg/point_cloud_with_pose.hpp"
+
 namespace multi_session_slam {
 
 class ScanMatcher : public rclcpp::Node {
@@ -48,6 +50,7 @@ class ScanMatcher : public rclcpp::Node {
 
  private:
   void PublishAdjustedPointCloud(PointCloudType::Ptr input_cloud,
+                                 Eigen::Matrix4f pose,
                                  rclcpp::Time timestamp);
   PointCloudType::Ptr PreprocessInputCloud(
       const typename sensor_msgs::msg::PointCloud2::SharedPtr msg,
@@ -70,7 +73,7 @@ class ScanMatcher : public rclcpp::Node {
   tf2_ros::TransformListener tf_listener_;
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr
       input_cloud_subscription_;
-  rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr
+  rclcpp::Publisher<multi_session_slam_msgs::msg::PointCloudWithPose>::SharedPtr
       modified_cloud_publisher_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr
       debug_cloud_publisher_;

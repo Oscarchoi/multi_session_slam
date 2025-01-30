@@ -37,20 +37,31 @@ MultiSessionSlam::MultiSessionSlam(const rclcpp::NodeOptions& options)
     : rclcpp::Node("multi_session_slam", options) {
   input_cloud_topic_ = get_or_default_parameter(this, "input_cloud_topic",
                                                 std::string("/input_cloud"));
+  output_cloud_topic_ = get_or_default_parameter(this, "output_cloud_topic",
+                                                 std::string("/output_cloud"));
   session_start_service_ = get_or_default_parameter(
       this, "session_start_service", std::string("/session_start"));
   session_end_service_ = get_or_default_parameter(this, "session_end_service",
                                                   std::string("/session_end"));
-
   global_frame_id_ =
       get_or_default_parameter(this, "global_frame_id", std::string("map"));
   vg_size_for_input_ = get_or_default_parameter(this, "vg_size_for_input", 0.2);
+
+  get_or_default_parameter(this, "registration_method", std::string("NDT"));
+  get_or_default_parameter(this, "voxel_leaf_size", 0.2);
+  get_or_default_parameter(this, "threshold_loop_closure_score", 1.0);
+  get_or_default_parameter(this, "range_of_searching_loop_closure", 20.0);
+  get_or_default_parameter(this, "loop_closure_search_num", 10.0);
+  get_or_default_parameter(this, "num_adjacent_pose_constraints", 5);
+  get_or_default_parameter(this, "is_debug", false);
 
   input_cloud_subscription_ =
       create_subscription<multi_session_slam_msgs::msg::PointCloudWithPose>(
           input_cloud_topic_, rclcpp::SensorDataQoS(),
           std::bind(&MultiSessionSlam::OnPointCloudReceived, this,
                     std::placeholders::_1));
+  output_cloud_publisher_ =
+      create_publisher<sensor_msgs::msg::PointCloud2>(output_cloud_topic_, 10);
   slam_session_start_service_ = create_service<test_msgs::srv::BasicTypes>(
       session_start_service_,
       std::bind(&MultiSessionSlam::OnSessionStartRequested, this,
@@ -89,21 +100,26 @@ void MultiSessionSlam::OnPointCloudReceived(
 
   Eigen::Matrix4f pose = convert(msg->pose);
 
+  size_t session_count = 0;
   {
     std::lock_guard<std::mutex> lock(session_mutex_);
     for (auto& session : slam_sessions_) {
       session.second->RegisterPointCloud(filtered_cloud, pose);
     }
+    session_count = slam_sessions_.size();
   }
+  RCLCPP_INFO(this->get_logger(),
+              "Received pointcloud (registered to %d sessions).",
+              session_count);
 }
 
 void MultiSessionSlam::OnSessionStartRequested(
     const std::shared_ptr<test_msgs::srv::BasicTypes::Request> request,
     std::shared_ptr<test_msgs::srv::BasicTypes::Response> response) {
-  RCLCPP_INFO(this->get_logger(), "Received SLAM session start requested: %s",
-              request->string_value);
-
   const std::string session_key = request->string_value;
+  RCLCPP_INFO(this->get_logger(), "Received SLAM session start requested: %s",
+              session_key.c_str());
+
   {
     std::lock_guard<std::mutex> lock(session_mutex_);
     if (slam_sessions_.find(session_key) != slam_sessions_.end()) {
@@ -123,10 +139,9 @@ void MultiSessionSlam::OnSessionStartRequested(
 void MultiSessionSlam::OnSessionEndRequested(
     const std::shared_ptr<test_msgs::srv::BasicTypes::Request> request,
     std::shared_ptr<test_msgs::srv::BasicTypes::Response> response) {
-  RCLCPP_INFO(this->get_logger(), "Received SLAM session end requested: %s",
-              request->string_value);
-
   const std::string session_key = request->string_value;
+  RCLCPP_INFO(this->get_logger(), "Received SLAM session end requested: %s",
+              session_key.c_str());
   std::shared_ptr<GraphSlam> target_session;
 
   {
@@ -146,8 +161,17 @@ void MultiSessionSlam::OnSessionEndRequested(
               session_key.c_str());
   // Wait for the session to be fully destroyed
   auto map = target_session->GenerateMapFromClouds();
-  RCLCPP_INFO(this->get_logger(), "Session '%s' ended successfully.",
+  if (!map || map->empty()) {
+    RCLCPP_ERROR(this->get_logger(), "Failed to generate map for session '%s'.",
+                 session_key.c_str());
+    response->bool_value = true;
+    return;
+  }
+
+  RCLCPP_INFO(this->get_logger(), "Session '%s' finished successfully.",
               session_key.c_str());
+  RCLCPP_INFO(this->get_logger(), "Generated pointcloud count: %d",
+              map->size());
 
   sensor_msgs::msg::PointCloud2 msg;
   pcl::toROSMsg(*map, msg);

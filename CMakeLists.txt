@@ -70,6 +70,7 @@ ament_target_dependencies(scan_matcher
   sensor_msgs
   nav_msgs
   ndt_omp_ros2
+  multi_session_slam_msgs
 )
 
 add_executable(scan_matcher_node

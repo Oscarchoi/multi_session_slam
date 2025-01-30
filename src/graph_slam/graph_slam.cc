@@ -91,7 +91,8 @@ void GraphSlam::RegisterPointCloud(const PointCloudType::Ptr& input_cloud,
 GraphSlam::PointCloudType::Ptr GraphSlam::GenerateMapFromClouds() {
   bool found = SearchLoopClosure();
   if (!found) {
-    return nullptr;
+    RCLCPP_ERROR(node_->get_logger(),
+                 "No loop closure candidate found. Generate map anyway.");
   }
   return DoPoseAdjustment();
 }
@@ -107,6 +108,8 @@ bool GraphSlam::SearchLoopClosure() {
     return false;
   }
 
+  // FIXME(wy.choi): Since we check for loop closure at the end, we need to
+  // iterate through double loops to find all possible loop closure candidates.
   size_t cloud_count = cloud_array_.size();
   auto& latest_cloud = cloud_array_[cloud_count - 1];
   auto& latest_pose = pose_array_[cloud_count - 1];
@@ -196,6 +199,7 @@ GraphSlam::PointCloudType::Ptr GraphSlam::DoPoseAdjustment() {
       Eigen::Matrix<double, 6, 6>::Identity();
 
   // add adjacent node edges
+  size_t adjacent_edge_count = 0;
   for (int idx = 0; idx < cloud_count; idx++) {
     Eigen::Isometry3d pose(pose_array_[idx].cast<double>());
     g2o::VertexSE3* vertex_se3 = new g2o::VertexSE3();
@@ -219,9 +223,12 @@ GraphSlam::PointCloudType::Ptr GraphSlam::DoPoseAdjustment() {
             optimizer.vertex(idx - num_adjacent_pose_constraints_ + j);
         edge_se3->vertices()[1] = optimizer.vertex(idx);
         optimizer.addEdge(edge_se3);
+        adjacent_edge_count++;
       }
     }
   }
+  RCLCPP_INFO(node_->get_logger(), "Found %d adjacent edges.",
+              adjacent_edge_count);
 
   // add loop edge
   for (auto loop_edge : loop_edges_) {
@@ -232,6 +239,7 @@ GraphSlam::PointCloudType::Ptr GraphSlam::DoPoseAdjustment() {
     edge_se3->vertices()[1] = optimizer.vertex(loop_edge.ids.second);
     optimizer.addEdge(edge_se3);
   }
+  RCLCPP_INFO(node_->get_logger(), "Found %d loop edges.", loop_edges_.size());
 
   RCLCPP_INFO(node_->get_logger(),
               "Start optimize loop closure and adjust pointclouds...");
@@ -244,13 +252,21 @@ GraphSlam::PointCloudType::Ptr GraphSlam::DoPoseAdjustment() {
         static_cast<g2o::VertexSE3*>(optimizer.vertex(idx));
     Eigen::Affine3d se3 = vertex_se3->estimate();
 
+    Eigen::Matrix4f corrected_transform =
+        se3.matrix().cast<float>() * pose_array_[idx].inverse();
+
     PointCloudType transformed_cloud;
     pcl::transformPointCloud(*cloud_array_[idx], transformed_cloud,
-                             se3.matrix().cast<float>());
+                             corrected_transform);
     *output_cloud += transformed_cloud;
   }
 
-  return output_cloud;
+  // filter output clouds
+  PointCloudType::Ptr filtered_output_cloud(new PointCloudType);
+  grid_filter_.setInputCloud(output_cloud);
+  grid_filter_.filter(*filtered_output_cloud);
+
+  return filtered_output_cloud;
 }
 
 }  // namespace multi_session_slam

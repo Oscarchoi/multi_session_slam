@@ -137,7 +137,8 @@ ScanMatcher::ScanMatcher(const rclcpp::NodeOptions& options)
                     std::placeholders::_1));
 
   modified_cloud_publisher_ =
-      create_publisher<sensor_msgs::msg::PointCloud2>(output_cloud_topic_, 10);
+      create_publisher<multi_session_slam_msgs::msg::PointCloudWithPose>(
+          output_cloud_topic_, 10);
 
   if (is_debug_) {
     debug_cloud_publisher_ =
@@ -174,7 +175,8 @@ void ScanMatcher::OnPointCloudReceived(
     RCLCPP_INFO(get_logger(), "Received first pointcloud.");
     registration_->setInputTarget(processed_cloud);
     cloud_queue_.push_back(processed_cloud);
-    PublishAdjustedPointCloud(processed_cloud, msg->header.stamp);
+    PublishAdjustedPointCloud(processed_cloud, Eigen::Matrix4f::Identity(),
+                              msg->header.stamp);
 
     previous_position_ = sensor_transform.block<3, 1>(0, 3);
     previous_rotation_ = sensor_transform.block<3, 3>(3, 3);
@@ -236,7 +238,7 @@ void ScanMatcher::OnPointCloudReceived(
     }
     cloud_queue_.push_back(modified_cloud);
 
-    PublishAdjustedPointCloud(modified_cloud, msg->header.stamp);
+    PublishAdjustedPointCloud(modified_cloud, modified_tf, msg->header.stamp);
     is_map_updated_ = true;
   }
 
@@ -250,13 +252,25 @@ void ScanMatcher::OnPointCloudReceived(
 }
 
 void ScanMatcher::PublishAdjustedPointCloud(PointCloudType::Ptr input_cloud,
+                                            Eigen::Matrix4f pose,
                                             rclcpp::Time timestamp) {
-  sensor_msgs::msg::PointCloud2 cloud_msg;
-  pcl::toROSMsg(*input_cloud, cloud_msg);
+  multi_session_slam_msgs::msg::PointCloudWithPose msg;
+  pcl::toROSMsg(*input_cloud, msg.cloud);
 
-  cloud_msg.header.frame_id = global_frame_id_;
-  cloud_msg.header.stamp = timestamp;
-  modified_cloud_publisher_->publish(cloud_msg);
+  Eigen::Vector3f position(pose.block<3, 1>(0, 3));
+  msg.pose.position.x = position[0];
+  msg.pose.position.y = position[1];
+  msg.pose.position.z = position[2];
+
+  Eigen::Quaternionf quaternion(pose.block<3, 3>(0, 0));
+  msg.pose.orientation.w = quaternion.w();
+  msg.pose.orientation.x = quaternion.x();
+  msg.pose.orientation.y = quaternion.y();
+  msg.pose.orientation.z = quaternion.z();
+
+  msg.cloud.header.frame_id = global_frame_id_;
+  msg.cloud.header.stamp = timestamp;
+  modified_cloud_publisher_->publish(msg);
 }
 
 ScanMatcher::PointCloudType::Ptr ScanMatcher::PreprocessInputCloud(

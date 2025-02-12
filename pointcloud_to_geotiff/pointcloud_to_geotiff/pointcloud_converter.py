@@ -34,7 +34,7 @@ class PointCloudConverter(Node):
         # other parameters
         self.declare_parameter("dense_resolution", 0.05)
         self.dense_resolution = self.get_parameter("dense_resolution").value
-        self.declare_parameter("sparse_resolution", 0.05)
+        self.declare_parameter("sparse_resolution", 0.2)
         self.sparse_resolution = self.get_parameter("sparse_resolution").value
         self.resolution = self.sparse_resolution
 
@@ -117,7 +117,7 @@ class PointCloudConverter(Node):
         filtered_z = z[mask]
         x_indices = np.floor((filtered_x - x_min) / self.resolution).astype(int)
         y_indices = np.floor((filtered_y - y_min) / self.resolution).astype(int)
-        z_values = np.floor((filtered_z) / self.resolution).astype(int)
+        z_values = np.floor(filtered_z).astype(int)
 
         # update highest z value
         grid = np.full((self.grid_size, self.grid_size), float("-inf"))
@@ -186,21 +186,23 @@ class PointCloudConverter(Node):
         band = dataset.GetRasterBand(1)
         band.WriteArray(data)
 
-        band.SetNoDataValue(0)
-        band.SetStatistics(np.min(data), np.max(data), np.mean(data), np.std(data))
+        band.SetNoDataValue(0.0)
+        band.SetStatistics(
+            np.nanmin(data), np.nanmax(data), np.nanmean(data), np.nanstd(data)
+        )
 
         srs = osr.SpatialReference()
-        srs.ImportFromEPSG(4326)  # WGS84 좌표체계
+        srs.ImportFromEPSG(3857)  # 예: Pseudo Mercator
         dataset.SetProjection(srs.ExportToWkt())
 
         # FIXME: Use your own GeoTransform
         x_min = 0
         y_min = 0
-        x_max = 1
-        y_max = 1
+        x_max = 1000
+        y_max = 1000
         x_res = (x_max - x_min) / self.grid_size
         y_res = (y_max - y_min) / self.grid_size
-        dataset.SetGeoTransform((x_min, x_res, 0, y_min, 0, y_res))
+        dataset.SetGeoTransform((x_min, x_res, 0, y_min, 0, -y_res))
 
         # close file
         dataset = None

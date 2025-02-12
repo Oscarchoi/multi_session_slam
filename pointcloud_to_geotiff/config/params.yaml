@@ -7,8 +7,8 @@ pointcloud_converter:
     enable_tf_update: False
     global_frame_id: "map"
     robot_frame_id: "sensors"
-    dense_resolution: 0.1
-    sparse_resolution: 0.05
+    dense_resolution: 0.05
+    sparse_resolution: 0.2
     sonar_distance: 80.0
     initial_x: 0.0
     initial_y: 0.0

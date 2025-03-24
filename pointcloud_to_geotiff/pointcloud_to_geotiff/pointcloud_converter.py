@@ -139,7 +139,7 @@ class PointCloudConverter(Node):
         if self.enable_png:
             self.convert_to_png(grid, timestamp)
 
-        self.convert_to_geotiff(grid, timestamp)
+        self.convert_to_geotiff(grid, msg.header.frame_id, timestamp)
 
     def pointcloud2_to_array(self, cloud_msg):
         fmt = "ffff"  # x, y, z, intensity
@@ -173,8 +173,8 @@ class PointCloudConverter(Node):
 
         self.get_logger().info(f"INFO: Saved pointcloud to '{output_file}'")
 
-    def convert_to_geotiff(self, grid, timestamp):
-        output_file = f"{self.output_directory}/output_{timestamp}.tiff"
+    def convert_to_geotiff(self, grid, prefix, timestamp):
+        output_file = f"{self.output_directory}/{prefix}_{timestamp}.tiff"
 
         driver = gdal.GetDriverByName("GTiff")
         dataset = driver.Create(

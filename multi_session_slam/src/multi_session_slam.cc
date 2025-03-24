@@ -196,7 +196,7 @@ void MultiSessionSlam::OnSessionEndRequested(
 
   sensor_msgs::msg::PointCloud2 msg;
   pcl::toROSMsg(*map, msg);
-  msg.header.frame_id = global_frame_id_;
+  msg.header.frame_id = session_key;
   msg.header.stamp = this->now();
   output_cloud_publisher_->publish(msg);
 

@@ -1,0 +1,3 @@
+std_msgs/String session_dir
+std_msgs/String session_name
+sensor_msgs/PointCloud2 cloud

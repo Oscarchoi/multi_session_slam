@@ -10,8 +10,7 @@ namespace multi_session_slam {
 namespace {
 
 template <typename T>
-T get_or_default_parameter(rclcpp::Node* node,
-                           const std::string& param_name,
+T get_or_default_parameter(rclcpp::Node* node, const std::string& param_name,
                            const T& default_value) {
   if (!node->has_parameter(param_name)) {
     node->declare_parameter<T>(param_name, default_value);
@@ -82,7 +81,8 @@ MultiSessionSlam::MultiSessionSlam(const rclcpp::NodeOptions& options)
           std::bind(&MultiSessionSlam::OnPointCloudReceived, this,
                     std::placeholders::_1));
   output_cloud_publisher_ =
-      create_publisher<sensor_msgs::msg::PointCloud2>(output_cloud_topic_, 10);
+      create_publisher<multi_session_slam_msgs::msg::PointCloudWithSessionInfo>(
+          output_cloud_topic_, 10);
   slam_session_start_service_ = create_service<test_msgs::srv::BasicTypes>(
       session_start_service_,
       std::bind(&MultiSessionSlam::OnSessionStartRequested, this,
@@ -194,12 +194,21 @@ void MultiSessionSlam::OnSessionEndRequested(
   RCLCPP_INFO(this->get_logger(), "Generated pointcloud count: %d",
               map->size());
 
-  sensor_msgs::msg::PointCloud2 msg;
-  pcl::toROSMsg(*map, msg);
-  msg.header.frame_id = session_key;
-  msg.header.stamp = this->now();
-  output_cloud_publisher_->publish(msg);
+  multi_session_slam_msgs::msg::PointCloudWithSessionInfo msg;
+  pcl::toROSMsg(*map, msg.cloud);
+  msg.cloud.header.frame_id = "base_link";
+  msg.cloud.header.stamp = this->now();
 
+  size_t pos = session_key.find_last_of('/');
+  if (pos != std::string::npos) {
+    msg.session_dir.data = session_key.substr(0, pos);
+    msg.session_name.data = session_key.substr(pos + 1);
+  } else {
+    msg.session_dir.data.clear();
+    msg.session_name.data = session_key;
+  }
+
+  output_cloud_publisher_->publish(msg);
   response->bool_value = true;
 }
 

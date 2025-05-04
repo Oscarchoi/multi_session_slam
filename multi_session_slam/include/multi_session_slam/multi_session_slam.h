@@ -18,6 +18,7 @@
 
 #include "multi_session_slam/graph_slam/graph_slam.h"
 #include "multi_session_slam_msgs/msg/point_cloud_with_pose.hpp"
+#include "multi_session_slam_msgs/msg/point_cloud_with_session_info.hpp"
 
 namespace multi_session_slam {
 
@@ -45,8 +46,8 @@ class MultiSessionSlam : public rclcpp::Node {
 
   rclcpp::Subscription<multi_session_slam_msgs::msg::PointCloudWithPose>::
       SharedPtr input_cloud_subscription_;
-  rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr
-      output_cloud_publisher_;
+  rclcpp::Publisher<multi_session_slam_msgs::msg::PointCloudWithSessionInfo>::
+      SharedPtr output_cloud_publisher_;
   rclcpp::Service<test_msgs::srv::BasicTypes>::SharedPtr
       slam_session_start_service_;
   rclcpp::Service<test_msgs::srv::BasicTypes>::SharedPtr

@@ -1,13 +1,13 @@
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import PointCloud2
+from multi_session_slam_msgs.msg import PointCloudWithSessionInfo
 import tf2_ros
-import geometry_msgs.msg
 
-import argparse
 import datetime
 import cv2
 import numpy as np
+import os
 import struct
 import yaml
 from osgeo import gdal, osr
@@ -50,7 +50,7 @@ class PointCloudConverter(Node):
         self.enable_metadata = self.get_parameter("enable_metadata").value
 
         self.subscription = self.create_subscription(
-            PointCloud2, self.input_cloud_topic, self.listener_callback, 1
+            PointCloudWithSessionInfo, self.input_cloud_topic, self.listener_callback, 1
         )
         self.latest_subscription = rclpy.time.Time()
         self.tf_buffer = tf2_ros.Buffer()
@@ -72,18 +72,19 @@ class PointCloudConverter(Node):
         self.get_logger().info(f"initial_y: {self.initial_y}")
         self.get_logger().info(f"enable_png: {self.enable_png}")
         self.get_logger().info(f"enable_metadata: {self.enable_metadata}")
-        self.get_logger().info(f"grid_size: {self.grid_size}x{self.grid_size} (WxH).")
+        self.get_logger().info(
+            f"grid_size: {self.grid_size}x{self.grid_size} (WxH).")
         self.get_logger().info(f"----------------------")
 
     def listener_callback(self, msg):
         self.get_logger().info(
-            f"Received pointcloud ({int(msg.row_step/msg.point_step)} points)."
+            f"Received pointcloud ({int(msg.cloud.row_step/msg.cloud.point_step)} points)."
         )
 
         if self.enable_tf_update:
-            self.get_base_link_pose(msg.header.stamp)
+            self.get_base_link_pose(msg.cloud.header.stamp)
 
-        points = self.pointcloud2_to_array(msg)
+        points = self.pointcloud2_to_array(msg.cloud)
         x = points[:, 0]
         y = points[:, 1]
         z = points[:, 2]
@@ -115,8 +116,10 @@ class PointCloudConverter(Node):
         filtered_x = x[mask]
         filtered_y = y[mask]
         filtered_z = z[mask]
-        x_indices = np.floor((filtered_x - x_min) / self.resolution).astype(int)
-        y_indices = np.floor((filtered_y - y_min) / self.resolution).astype(int)
+        x_indices = np.floor((filtered_x - x_min) /
+                             self.resolution).astype(int)
+        y_indices = np.floor((filtered_y - y_min) /
+                             self.resolution).astype(int)
         z_values = np.floor(filtered_z).astype(int)
 
         # update highest z value
@@ -139,7 +142,8 @@ class PointCloudConverter(Node):
         if self.enable_png:
             self.convert_to_png(grid, timestamp)
 
-        self.convert_to_geotiff(grid, msg.header.frame_id, timestamp)
+        self.convert_to_geotiff(grid, msg.session_dir.data,
+                                msg.session_name.data, timestamp)
 
     def pointcloud2_to_array(self, cloud_msg):
         fmt = "ffff"  # x, y, z, intensity
@@ -148,7 +152,8 @@ class PointCloudConverter(Node):
         data = cloud_msg.data
         cloud_points = []
         for i in range(0, len(data), point_step):
-            x, y, z, intensity = struct.unpack(fmt, data[i : i + point_step][:16])
+            x, y, z, intensity = struct.unpack(
+                fmt, data[i: i + point_step][:16])
             cloud_points.append([x, y, z, intensity])
 
         return np.array(cloud_points)
@@ -173,8 +178,15 @@ class PointCloudConverter(Node):
 
         self.get_logger().info(f"INFO: Saved pointcloud to '{output_file}'")
 
-    def convert_to_geotiff(self, grid, prefix, timestamp):
-        output_file = f"{self.output_directory}/{prefix}_{timestamp}.tiff"
+    def convert_to_geotiff(self, grid, session_dir, session_name, timestamp):
+        if session_dir:
+            output_dir = os.path.join(self.output_directory, session_dir)
+            os.makedirs(output_dir, exist_ok=True)
+        else:
+            output_dir = self.output_directory
+
+        filename = f"{session_name}_{timestamp}.tiff"
+        output_file = os.path.join(output_dir, filename)
 
         driver = gdal.GetDriverByName("GTiff")
         dataset = driver.Create(

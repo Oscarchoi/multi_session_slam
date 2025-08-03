@@ -42,6 +42,9 @@ MultiSessionSlam::MultiSessionSlam(const rclcpp::NodeOptions& options)
       this, "session_start_service", std::string("/session_start"));
   session_end_service_ = get_or_default_parameter(this, "session_end_service",
                                                   std::string("/session_end"));
+  session_update_service_ = get_or_default_parameter(
+      this, "session_update_service", std::string("/session_update"));
+                                        
   global_frame_id_ =
       get_or_default_parameter(this, "global_frame_id", std::string("map"));
   vg_size_for_input_ = get_or_default_parameter(this, "vg_size_for_input", 0.2);
@@ -90,6 +93,10 @@ MultiSessionSlam::MultiSessionSlam(const rclcpp::NodeOptions& options)
   slam_session_end_service_ = create_service<test_msgs::srv::BasicTypes>(
       session_end_service_,
       std::bind(&MultiSessionSlam::OnSessionEndRequested, this,
+                std::placeholders::_1, std::placeholders::_2));
+  slam_session_update_service_ = create_service<test_msgs::srv::BasicTypes>(
+      session_update_service_,
+      std::bind(&MultiSessionSlam::OnSessionUpdateRequested, this,
                 std::placeholders::_1, std::placeholders::_2));
 }
 
@@ -190,6 +197,63 @@ void MultiSessionSlam::OnSessionEndRequested(
   }
 
   RCLCPP_INFO(this->get_logger(), "Session '%s' finished successfully.",
+              session_key.c_str());
+  RCLCPP_INFO(this->get_logger(), "Generated pointcloud count: %d",
+              map->size());
+
+  multi_session_slam_msgs::msg::PointCloudWithSessionInfo msg;
+  pcl::toROSMsg(*map, msg.cloud);
+  msg.cloud.header.frame_id = "base_link";
+  msg.cloud.header.stamp = this->now();
+
+  size_t pos = session_key.find_last_of('/');
+  if (pos != std::string::npos) {
+    msg.session_dir.data = session_key.substr(0, pos);
+    msg.session_name.data = session_key.substr(pos + 1);
+  } else {
+    msg.session_dir.data.clear();
+    msg.session_name.data = session_key;
+  }
+
+  output_cloud_publisher_->publish(msg);
+  response->bool_value = true;
+}
+
+void MultiSessionSlam::OnSessionUpdateRequested(
+    const std::shared_ptr<test_msgs::srv::BasicTypes::Request> request,
+    std::shared_ptr<test_msgs::srv::BasicTypes::Response> response) {
+  const std::string session_key = request->string_value;
+  RCLCPP_INFO(this->get_logger(), "Received SLAM session update requested: %s",
+              session_key.c_str());
+
+  std::shared_ptr<GraphSlam> target_session;
+  
+  {
+    std::lock_guard<std::mutex> lock(session_mutex_);
+    auto it = slam_sessions_.find(session_key);
+    if (it == slam_sessions_.end()) {
+      RCLCPP_WARN(this->get_logger(), "Session with key '%s' does not exist.",
+                  session_key.c_str());
+      response->bool_value = false;
+      return;
+    }
+    target_session = it->second;
+  }
+  // session_mutex_ 해제됨
+
+  RCLCPP_INFO(this->get_logger(), "Start map generation for session '%s'...",
+              session_key.c_str());
+  // Generate map without destroying the session
+  auto map = target_session->GenerateMapFromClouds();
+  
+  if (!map || map->empty()) {
+    RCLCPP_ERROR(this->get_logger(), "Failed to generate map for session '%s'.",
+                 session_key.c_str());
+    response->bool_value = false;
+    return;
+  }
+
+  RCLCPP_INFO(this->get_logger(), "Session '%s' updated successfully.",
               session_key.c_str());
   RCLCPP_INFO(this->get_logger(), "Generated pointcloud count: %d",
               map->size());

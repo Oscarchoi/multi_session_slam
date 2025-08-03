@@ -84,35 +84,53 @@ GraphSlam::~GraphSlam() {}
 
 void GraphSlam::RegisterPointCloud(const PointCloudType::Ptr& input_cloud,
                                    Eigen::Matrix4f pose) {
+  std::lock_guard<std::mutex> lock(data_mutex_);
   cloud_array_.push_back(input_cloud);
   pose_array_.push_back(pose);
 }
 
 GraphSlam::PointCloudType::Ptr GraphSlam::GenerateMapFromClouds() {
-  bool found = SearchLoopClosure();
-  if (!found) {
-    RCLCPP_ERROR(node_->get_logger(),
-                 "No loop closure candidate found. Generate map anyway.");
+  std::vector<PointCloudType::Ptr> cloud_copy;
+  std::vector<Eigen::Matrix4f> pose_copy;
+  
+  {
+    std::lock_guard<std::mutex> lock(data_mutex_);
+    cloud_copy = cloud_array_;
+    pose_copy = pose_array_;
+    
+    RCLCPP_INFO(node_->get_logger(), 
+                "Copied %zu clouds and %zu poses for map generation - lock released", 
+                cloud_copy.size(), pose_copy.size());
   }
-  return DoPoseAdjustment();
+  
+  return GenerateMapFromData(cloud_copy, pose_copy);
 }
 
 bool GraphSlam::SearchLoopClosure() {
-  if (cloud_array_.size() == 0) {
+  std::lock_guard<std::mutex> lock(data_mutex_);
+  return SearchLoopClosureFromData(cloud_array_, pose_array_, loop_edges_);
+}
+
+bool GraphSlam::SearchLoopClosureFromData(
+    const std::vector<PointCloudType::Ptr>& clouds,
+    const std::vector<Eigen::Matrix4f>& poses,
+    std::vector<LoopEdge>& loop_edges_out) {
+  
+  if (clouds.size() == 0) {
     RCLCPP_ERROR(node_->get_logger(), "No cloud received.");
     return false;
   }
-  if (cloud_array_.size() != pose_array_.size()) {
+  if (clouds.size() != poses.size()) {
     RCLCPP_ERROR(node_->get_logger(), "Invalid array size: %ld vs %ld",
-                 cloud_array_.size(), pose_array_.size());
+                 clouds.size(), poses.size());
     return false;
   }
 
   // FIXME(wy.choi): Since we check for loop closure at the end, we need to
   // iterate through double loops to find all possible loop closure candidates.
-  size_t cloud_count = cloud_array_.size();
-  auto& latest_cloud = cloud_array_[cloud_count - 1];
-  auto& latest_pose = pose_array_[cloud_count - 1];
+  size_t cloud_count = clouds.size();
+  auto& latest_cloud = clouds[cloud_count - 1];
+  auto& latest_pose = poses[cloud_count - 1];
   auto latest_position = latest_pose.block<3, 1>(0, 3);
 
   double min_fitness_score = std::numeric_limits<double>::max();
@@ -124,7 +142,7 @@ bool GraphSlam::SearchLoopClosure() {
 
   // find the smallest index capable of generating loop closure
   for (int idx = 0; idx < cloud_count - 1; idx++) {
-    auto& pose = pose_array_[idx];
+    auto& pose = poses[idx];
     auto position = pose.block<3, 1>(0, 3);
 
     double distance = (position - latest_position).norm();
@@ -149,7 +167,7 @@ bool GraphSlam::SearchLoopClosure() {
     if (idx < 0 || idx >= cloud_count) {
       continue;
     }
-    *loop_closure_target_cloud += *(cloud_array_[idx]);
+    *loop_closure_target_cloud += *(clouds[idx]);
   }
 
   PointCloudType::Ptr filtered_cloud(new PointCloudType);
@@ -172,17 +190,26 @@ bool GraphSlam::SearchLoopClosure() {
   loop_edge.ids = {min_index, cloud_count - 1};
 
   Eigen::Isometry3d from =
-      Eigen::Isometry3d(pose_array_[min_index].cast<double>());
+      Eigen::Isometry3d(poses[min_index].cast<double>());
   Eigen::Isometry3d to =
       Eigen::Isometry3d(registration_->getFinalTransformation().cast<double>() *
                         latest_pose.matrix().cast<double>());
   loop_edge.relative_pose = Eigen::Isometry3d(from.inverse() * to);
-  loop_edges_.push_back(loop_edge);
+  loop_edges_out.push_back(loop_edge);
 
   return true;
 }
 
 GraphSlam::PointCloudType::Ptr GraphSlam::DoPoseAdjustment() {
+  std::lock_guard<std::mutex> lock(data_mutex_);
+  return DoPoseAdjustmentFromData(cloud_array_, pose_array_, loop_edges_);
+}
+
+GraphSlam::PointCloudType::Ptr GraphSlam::DoPoseAdjustmentFromData(
+    const std::vector<PointCloudType::Ptr>& clouds,
+    const std::vector<Eigen::Matrix4f>& poses,
+    const std::vector<LoopEdge>& loop_edges) {
+    
   g2o::SparseOptimizer optimizer;
   optimizer.setVerbose(false);
   std::unique_ptr<g2o::BlockSolver_6_3::LinearSolverType> linear_solver =
@@ -194,14 +221,14 @@ GraphSlam::PointCloudType::Ptr GraphSlam::DoPoseAdjustment() {
 
   optimizer.setAlgorithm(solver);
 
-  size_t cloud_count = cloud_array_.size();
+  size_t cloud_count = clouds.size();
   Eigen::Matrix<double, 6, 6> info_mat =
       Eigen::Matrix<double, 6, 6>::Identity();
 
   // add adjacent node edges
   size_t adjacent_edge_count = 0;
   for (int idx = 0; idx < cloud_count; idx++) {
-    Eigen::Isometry3d pose(pose_array_[idx].cast<double>());
+    Eigen::Isometry3d pose(poses[idx].cast<double>());
     g2o::VertexSE3* vertex_se3 = new g2o::VertexSE3();
     vertex_se3->setId(idx);
     vertex_se3->setEstimate(pose);
@@ -213,7 +240,7 @@ GraphSlam::PointCloudType::Ptr GraphSlam::DoPoseAdjustment() {
     if (idx > num_adjacent_pose_constraints_) {
       for (int j = 0; j < num_adjacent_pose_constraints_; j++) {
         Eigen::Isometry3d pre_pose(
-            pose_array_[idx - num_adjacent_pose_constraints_ + j]
+            poses[idx - num_adjacent_pose_constraints_ + j]
                 .cast<double>());
         Eigen::Isometry3d relative_pose = pre_pose.inverse() * pose;
         g2o::EdgeSE3* edge_se3 = new g2o::EdgeSE3();
@@ -231,7 +258,7 @@ GraphSlam::PointCloudType::Ptr GraphSlam::DoPoseAdjustment() {
               adjacent_edge_count);
 
   // add loop edge
-  for (auto loop_edge : loop_edges_) {
+  for (auto loop_edge : loop_edges) {
     g2o::EdgeSE3* edge_se3 = new g2o::EdgeSE3();
     edge_se3->setMeasurement(loop_edge.relative_pose);
     edge_se3->setInformation(info_mat);
@@ -239,7 +266,7 @@ GraphSlam::PointCloudType::Ptr GraphSlam::DoPoseAdjustment() {
     edge_se3->vertices()[1] = optimizer.vertex(loop_edge.ids.second);
     optimizer.addEdge(edge_se3);
   }
-  RCLCPP_INFO(node_->get_logger(), "Found %d loop edges.", loop_edges_.size());
+  RCLCPP_INFO(node_->get_logger(), "Found %d loop edges.", loop_edges.size());
 
   RCLCPP_INFO(node_->get_logger(),
               "Start optimize loop closure and adjust pointclouds...");
@@ -253,10 +280,10 @@ GraphSlam::PointCloudType::Ptr GraphSlam::DoPoseAdjustment() {
     Eigen::Affine3d se3 = vertex_se3->estimate();
 
     Eigen::Matrix4f corrected_transform =
-        se3.matrix().cast<float>() * pose_array_[idx].inverse();
+        se3.matrix().cast<float>() * poses[idx].inverse();
 
     PointCloudType transformed_cloud;
-    pcl::transformPointCloud(*cloud_array_[idx], transformed_cloud,
+    pcl::transformPointCloud(*clouds[idx], transformed_cloud,
                              corrected_transform);
     *output_cloud += transformed_cloud;
   }
@@ -267,6 +294,21 @@ GraphSlam::PointCloudType::Ptr GraphSlam::DoPoseAdjustment() {
   grid_filter_.filter(*filtered_output_cloud);
 
   return filtered_output_cloud;
+}
+
+GraphSlam::PointCloudType::Ptr GraphSlam::GenerateMapFromData(
+    const std::vector<PointCloudType::Ptr>& clouds,
+    const std::vector<Eigen::Matrix4f>& poses) {
+    
+  std::vector<LoopEdge> detected_loop_edges;
+  
+  bool found = SearchLoopClosureFromData(clouds, poses, detected_loop_edges);
+  if (!found) {
+    RCLCPP_ERROR(node_->get_logger(),
+                 "No loop closure candidate found. Generate map anyway.");
+  }
+  
+  return DoPoseAdjustmentFromData(clouds, poses, detected_loop_edges);
 }
 
 }  // namespace multi_session_slam

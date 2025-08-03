@@ -25,6 +25,7 @@ multi_session_slam:
     input_cloud_topic: "/modified_cloud"
     output_cloud_topic: "/output_cloud"
     session_start_service: "/session_start"
+    session_update_service: "/session_update"
     session_end_service: "/session_end"
     global_frame_id: "map"
     vg_size_for_input: 0.1

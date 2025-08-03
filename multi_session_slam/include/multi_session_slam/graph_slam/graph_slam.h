@@ -17,6 +17,7 @@
 
 #include <memory>
 #include <vector>
+#include <mutex>
 
 #include <rclcpp/rclcpp.hpp>
 
@@ -46,14 +47,28 @@ class GraphSlam {
 
  private:
   bool SearchLoopClosure();
+  bool SearchLoopClosureFromData(
+      const std::vector<PointCloudType::Ptr>& clouds,
+      const std::vector<Eigen::Matrix4f>& poses,
+      std::vector<LoopEdge>& loop_edges_out);
 
   PointCloudType::Ptr DoPoseAdjustment();
+  PointCloudType::Ptr DoPoseAdjustmentFromData(
+      const std::vector<PointCloudType::Ptr>& clouds,
+      const std::vector<Eigen::Matrix4f>& poses,
+      const std::vector<LoopEdge>& loop_edges);
+      
+  PointCloudType::Ptr GenerateMapFromData(
+      const std::vector<PointCloudType::Ptr>& clouds,
+      const std::vector<Eigen::Matrix4f>& poses);
 
   pcl::Registration<PointType, PointType>::Ptr registration_;
   std::vector<PointCloudType::Ptr> cloud_array_;
   std::vector<Eigen::Matrix4f> pose_array_;
   std::vector<LoopEdge> loop_edges_;
   pcl::VoxelGrid<PointType> grid_filter_;
+  
+  mutable std::mutex data_mutex_;  // 데이터 보호용 뮤텍스
 
   // parameters
   std::string registration_method_;

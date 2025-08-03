@@ -40,6 +40,9 @@ class MultiSessionSlam : public rclcpp::Node {
   void OnSessionEndRequested(
       const std::shared_ptr<test_msgs::srv::BasicTypes::Request> request,
       std::shared_ptr<test_msgs::srv::BasicTypes::Response> response);
+  void OnSessionUpdateRequested(
+      const std::shared_ptr<test_msgs::srv::BasicTypes::Request> request,
+      std::shared_ptr<test_msgs::srv::BasicTypes::Response> response);
 
   std::map<std::string, std::shared_ptr<GraphSlam>> slam_sessions_;
   std::mutex session_mutex_;
@@ -52,11 +55,14 @@ class MultiSessionSlam : public rclcpp::Node {
       slam_session_start_service_;
   rclcpp::Service<test_msgs::srv::BasicTypes>::SharedPtr
       slam_session_end_service_;
+  rclcpp::Service<test_msgs::srv::BasicTypes>::SharedPtr
+      slam_session_update_service_;
 
   std::string input_cloud_topic_;
   std::string output_cloud_topic_;
   std::string session_start_service_;
   std::string session_end_service_;
+  std::string session_update_service_;
   std::string global_frame_id_;
 
   bool debug_ = false;

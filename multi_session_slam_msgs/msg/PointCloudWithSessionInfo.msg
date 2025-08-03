@@ -1,3 +1,4 @@
 std_msgs/String session_dir
 std_msgs/String session_name
+geometry_msgs/PoseStamped current_pose
 sensor_msgs/PointCloud2 cloud

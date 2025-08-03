@@ -44,6 +44,8 @@ class GraphSlam {
   void RegisterPointCloud(const PointCloudType::Ptr& input_cloud,
                           Eigen::Matrix4f pose);
   PointCloudType::Ptr GenerateMapFromClouds();
+  
+  Eigen::Matrix4f GetLatestPose() const;
 
  private:
   bool SearchLoopClosure();

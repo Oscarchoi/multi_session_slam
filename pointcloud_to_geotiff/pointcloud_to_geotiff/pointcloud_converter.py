@@ -94,15 +94,31 @@ class PointCloudConverter(Node):
         self.get_logger().info(
             f"Mean Point: x={mean_x:.3f}, y={mean_y:.3f}, z={mean_z:.3f}"
         )
-        threshold = self.grid_size / 2
-        if abs(mean_x - self.x) > threshold or abs(mean_y - self.y) > threshold:
-            self.get_logger().warn(f"Mean position is too far from initial position.")
-
-        # filter points
+        
+        # Robot's current position (world coordinates)
+        robot_world_x = msg.current_pose.pose.position.x
+        robot_world_y = msg.current_pose.pose.position.y
+        robot_world_z = msg.current_pose.pose.position.z
+        
+        # Set boundaries for filtering points and calculating robot position
         x_min = float(-self.sonar_distance) + self.x
         x_max = float(self.sonar_distance) + self.x
         y_min = float(-self.sonar_distance) + self.y
         y_max = float(self.sonar_distance) + self.y
+        
+        # Convert robot position to pixel coordinates
+        robot_pixel_x = (robot_world_x - x_min) / self.resolution
+        robot_pixel_y = (robot_world_y - y_min) / self.resolution
+        
+        # Log robot's current position
+        self.get_logger().info(
+            f"Robot Position: world=({robot_world_x:.3f}, {robot_world_y:.3f}, {robot_world_z:.3f}), "
+            f"pixel=({robot_pixel_x:.1f}, {robot_pixel_y:.1f})"
+        )
+        
+        threshold = self.grid_size / 2
+        if abs(mean_x - self.x) > threshold or abs(mean_y - self.y) > threshold:
+            self.get_logger().warn(f"Mean position is too far from initial position.")
         mask = (x_min <= x) & (x < x_max) & (y_min <= y) & (y < y_max)
         num_true_points = mask.sum()
         if num_true_points == 0:
@@ -127,10 +143,29 @@ class PointCloudConverter(Node):
         np.maximum.at(grid, (y_indices, x_indices), z_values)
 
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        
         metadata = {
+            "session_name": msg.session_name.data,
+            "session_dir": msg.session_dir.data,
             "pixel_height": self.grid_size,
             "pixel_width": self.grid_size,
             "resolution": self.resolution,
+            "robot_world_position": {
+                "x": float(robot_world_x),
+                "y": float(robot_world_y), 
+                "z": float(robot_world_z)
+            },
+            "robot_pixel_position": {
+                "x": float(robot_pixel_x),
+                "y": float(robot_pixel_y)
+            },
+            "grid_bounds": {
+                "x_min": float(x_min),
+                "x_max": float(x_min + self.grid_size * self.resolution),
+                "y_min": float(y_min),
+                "y_max": float(y_min + self.grid_size * self.resolution)
+            },
+            "timestamp": timestamp,
         }
 
         if self.enable_metadata:

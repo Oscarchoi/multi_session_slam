@@ -106,6 +106,14 @@ GraphSlam::PointCloudType::Ptr GraphSlam::GenerateMapFromClouds() {
   return GenerateMapFromData(cloud_copy, pose_copy);
 }
 
+Eigen::Matrix4f GraphSlam::GetLatestPose() const {
+  std::lock_guard<std::mutex> lock(data_mutex_);  
+  if (pose_array_.empty()) {
+    return Eigen::Matrix4f::Identity();
+  }
+  return pose_array_.back();
+}
+
 bool GraphSlam::SearchLoopClosure() {
   std::lock_guard<std::mutex> lock(data_mutex_);
   return SearchLoopClosureFromData(cloud_array_, pose_array_, loop_edges_);

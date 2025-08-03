@@ -5,6 +5,8 @@
 #include <pcl_conversions/pcl_conversions.h>
 #include <pclomp/voxel_grid_covariance_omp.h>
 
+#include <geometry_msgs/msg/pose_stamped.hpp>
+
 namespace multi_session_slam {
 
 namespace {
@@ -28,6 +30,32 @@ Eigen::Matrix4f convert(const geometry_msgs::msg::Pose& pose) {
                                 pose.orientation.y, pose.orientation.z);
   transform.block<3, 3>(0, 0) = quaternion.toRotationMatrix();
   return transform;
+}
+
+geometry_msgs::msg::PoseStamped matrixToPoseStamped(const Eigen::Matrix4f& matrix, 
+  const std::string& frame_id, 
+    const rclcpp::Time& stamp) {
+  geometry_msgs::msg::PoseStamped pose_stamped;
+
+  pose_stamped.header.frame_id = frame_id;
+  pose_stamped.header.stamp = stamp;
+
+  // Translation
+  pose_stamped.pose.position.x = matrix(0, 3);
+  pose_stamped.pose.position.y = matrix(1, 3);
+  pose_stamped.pose.position.z = matrix(2, 3);
+
+  // Rotation matrix to quaternion
+  Eigen::Matrix3f rotation = matrix.block<3, 3>(0, 0);
+  Eigen::Quaternionf q(rotation);
+  q.normalize();
+
+  pose_stamped.pose.orientation.x = q.x();
+  pose_stamped.pose.orientation.y = q.y();
+  pose_stamped.pose.orientation.z = q.z();
+  pose_stamped.pose.orientation.w = q.w();
+
+  return pose_stamped;
 }
 
 }  // namespace
@@ -206,6 +234,9 @@ void MultiSessionSlam::OnSessionEndRequested(
   msg.cloud.header.frame_id = "base_link";
   msg.cloud.header.stamp = this->now();
 
+  Eigen::Matrix4f current_pose = target_session->GetLatestPose();
+  msg.current_pose = matrixToPoseStamped(current_pose, "base_link", this->now());
+
   size_t pos = session_key.find_last_of('/');
   if (pos != std::string::npos) {
     msg.session_dir.data = session_key.substr(0, pos);
@@ -262,6 +293,9 @@ void MultiSessionSlam::OnSessionUpdateRequested(
   pcl::toROSMsg(*map, msg.cloud);
   msg.cloud.header.frame_id = "base_link";
   msg.cloud.header.stamp = this->now();
+
+  Eigen::Matrix4f current_pose = target_session->GetLatestPose();
+  msg.current_pose = matrixToPoseStamped(current_pose, "base_link", this->now());
 
   size_t pos = session_key.find_last_of('/');
   if (pos != std::string::npos) {
